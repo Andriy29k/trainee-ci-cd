@@ -1,0 +1,81 @@
+name: Trainee-tasks-CI-CD
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run tests
+      run: python -m pytest
+
+  deploy:
+    needs: tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Clone repo
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          if [ ! -d "trainee-ci-cd" ]; then
+            git clone https://github.com/Andriy29k/trainee-ci-cd.git && cd trainee-ci-cd
+          else
+            cd trainee-ci-cd && git pull
+          fi
+
+    - name: Install Docker
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          if ! command -v docker &> /dev/null
+          then
+            echo "Docker not found, installing..."
+            sudo apt-get update
+            sudo apt-get install -y docker.io docker-compose
+            sudo systemctl start docker
+            sudo systemctl enable docker
+          else
+            echo "Docker is already installed."
+          fi
+
+    - name: Deploy application
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SERVER_IP }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          cd ~/trainee-ci-cd
+          sudo docker-compose down || true
+          sudo docker-compose up -d --build
+
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: Health check
+      run: |
+        sleep 10
+        if curl -s http://${{ secrets.SERVER_IP }}:8080/ | grep "App is running!" > /dev/null; then
+          echo "Health check passed!"
+        else
+          echo "Health check failed!"
+          exit 1
+        fi
